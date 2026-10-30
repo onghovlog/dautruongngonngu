@@ -35,9 +35,9 @@ Website Minigame đấu trường kiến thức Tiếng Việt dành riêng cho 
 
 ## 2. Yêu cầu & Công nghệ
 - **Node.js**: Phiên bản 18.x trở lên (đã kiểm thử ổn định trên Node.js v22).
+- **Database**: MongoDB Atlas (kết nối qua Mongoose với Replica Set, hỗ trợ index chuyên dụng). Hệ thống đồng thời duy trì sao lưu song song (Dual-write) vào JSON File qua hàng đợi Atomic Write Queue an toàn trên máy chủ.
 - **Frontend**: HTML5, Vanilla CSS3 (Custom Design System, Dark Mode `#0B0F16`, Cam `#FF7A18`), Vanilla JavaScript ES Modules (không dùng framework nặng).
 - **Backend**: Node.js & Express.
-- **Database**: File JSON lưu tuần tự qua hàng đợi Atomic Write Queue an toàn trên máy chủ.
 - **Bảo mật**: Cookie HttpOnly, SameSite=Lax, SHA-256 hash mã khôi phục, Bcrypt hash mật khẩu Admin, CSV export có BOM UTF-8 chống Formula Injection.
 
 ---
@@ -49,12 +49,20 @@ Website Minigame đấu trường kiến thức Tiếng Việt dành riêng cho 
 npm install
 ```
 
-### Bước 2: Khởi tạo dữ liệu câu hỏi, ô chữ và mùa giải
+### Bước 2: Cấu hình biến môi trường kết nối MongoDB Atlas
+Tạo hoặc kiểm tra file `.env` tại thư mục gốc:
+```env
+PORT=3000
+NODE_ENV=development
+MONGODB_URI=mongodb+srv://thayhoweb_db_user:Tuong29042011@cluster0.uafqmya.mongodb.net/dautruongngonngu?retryWrites=true&w=majority
+```
+
+### Bước 3: Khởi tạo dữ liệu câu hỏi, ô chữ và mùa giải vào MongoDB Atlas
 ```bash
 npm run seed
 ```
 
-### Bước 3: Khởi động máy chủ
+### Bước 4: Khởi động máy chủ
 ```bash
 npm start
 ```

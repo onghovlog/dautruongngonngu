@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { readJson, updateJson, PATHS } from '../storage/jsonStore.js';
+import AdminConfig from '../models/AdminConfig.js';
+import { readJson, PATHS } from '../storage/jsonStore.js';
 
 const ADMIN_SESSIONS = new Map(); // token -> { username, expiresAt }
 const LOGIN_RATE_LIMIT = new Map(); // ip -> { count, resetAt }
@@ -24,7 +25,13 @@ export async function adminLogin(username, password, clientIp = 'global') {
     throw new Error(`Đăng nhập sai quá 5 lần. Vui lòng thử lại sau ${waitMins} phút.`);
   }
 
-  const adminConfig = await readJson(PATHS.ADMIN);
+  let adminConfig = await AdminConfig.findOne({ username: username?.trim() }).lean();
+  if (!adminConfig) {
+    adminConfig = await AdminConfig.findOne({}).lean();
+  }
+  if (!adminConfig) {
+    adminConfig = await readJson(PATHS.ADMIN);
+  }
   if (!adminConfig) {
     throw new Error('Chưa cấu hình tài khoản quản trị viên.');
   }

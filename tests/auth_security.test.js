@@ -1,5 +1,6 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
 import {
   createPlayer,
   recoverPlayer,
@@ -8,7 +9,12 @@ import {
   revokeSession
 } from '../server/auth/playerAuth.js';
 
+after(async () => {
+  await disconnectDB();
+});
+
 test('Kiểm tra nhận diện hồ sơ, trùng tên, mã khôi phục và bảo mật', async () => {
+  await connectDB();
   // 1. Hai người trùng tên phải có 2 playerId hoàn toàn khác nhau
   const p1 = await createPlayer('Nguyễn Văn Bảo', 'PH11111', 'WD18301', true);
   const p2 = await createPlayer('Nguyễn Văn Bảo', 'PH22222', 'WD18302', false);

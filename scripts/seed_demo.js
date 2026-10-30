@@ -1,12 +1,25 @@
 import crypto from 'crypto';
 import { readJson, updateJson, PATHS } from '../server/storage/jsonStore.js';
 import { getActiveSeason } from '../server/services/gameService.js';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
+import Player from '../server/models/Player.js';
+import Attempt from '../server/models/Attempt.js';
 
 async function main() {
   const isClear = process.argv.includes('--clear');
 
+  let isMongoConnected = false;
+  try {
+    await connectDB();
+    isMongoConnected = true;
+  } catch (_) {}
+
   if (isClear) {
     console.log("Đang xóa toàn bộ dữ liệu demo...");
+    if (isMongoConnected) {
+      await Player.deleteMany({ isDemo: true });
+      await Attempt.deleteMany({ isDemo: true });
+    }
     await updateJson(PATHS.PLAYERS, (players = []) => {
       return players.filter(p => !p.isDemo);
     });
@@ -14,6 +27,7 @@ async function main() {
       return attempts.filter(a => !a.isDemo);
     });
     console.log("✓ Đã xóa sạch dữ liệu demo an toàn.");
+    if (isMongoConnected) await disconnectDB();
     return;
   }
 
@@ -36,7 +50,7 @@ async function main() {
     const playerId = 'ply_demo_' + (i + 1);
     const attemptId = 'att_demo_' + (i + 1);
 
-    const completionDate = new Date(now.getTime() - (i * 2 + 1) * 3600000).toISOString();
+    const completionDate = new Date(now.getTime() - (i * 2 + 1) * 3600000);
 
     const newPlayer = {
       playerId,
@@ -85,6 +99,11 @@ async function main() {
       }
     };
 
+    if (isMongoConnected) {
+      await Player.findOneAndUpdate({ playerId }, newPlayer, { upsert: true });
+      await Attempt.findOneAndUpdate({ attemptId }, newAttempt, { upsert: true });
+    }
+
     await updateJson(PATHS.PLAYERS, (players = []) => {
       if (!players.some(p => p.playerId === playerId)) {
         players.push(newPlayer);
@@ -100,7 +119,11 @@ async function main() {
     });
   }
 
-  console.log("✓ Tạo thành công 6 kết quả demo vào Bảng Xếp Hạng.");
+  if (isMongoConnected) {
+    await disconnectDB();
+  }
+
+  console.log("✓ Tạo thành công 6 kết quả demo vào Bảng Xếp Hạng (MongoDB & Backup).");
   console.log("  Để xóa dữ liệu demo, chạy: npm run seed-demo -- --clear");
 }
 

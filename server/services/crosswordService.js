@@ -1,3 +1,4 @@
+import Crossword from '../models/Crossword.js';
 import { readJson, updateJson, PATHS } from '../storage/jsonStore.js';
 import { normalizeVietnamese } from './textUtils.js';
 import { getQuestionsByRound } from './questionService.js';
@@ -6,6 +7,10 @@ import { getQuestionsByRound } from './questionService.js';
  * Lấy tất cả các bộ ô chữ
  */
 export async function getAllCrosswords() {
+  try {
+    const list = await Crossword.find().sort({ createdAt: -1 }).lean();
+    if (list && list.length > 0) return list;
+  } catch (_) {}
   return await readJson(PATHS.CROSSWORDS, []);
 }
 
@@ -13,6 +18,14 @@ export async function getAllCrosswords() {
  * Lấy một bộ ô chữ ngẫu nhiên đã duyệt
  */
 export async function getRandomApprovedCrossword() {
+  try {
+    const approved = await Crossword.find({ isApproved: true }).lean();
+    if (approved && approved.length > 0) {
+      const randomIndex = Math.floor(Math.random() * approved.length);
+      return approved[randomIndex];
+    }
+  } catch (_) {}
+
   const list = await getAllCrosswords();
   const approved = list.filter(c => c.isApproved);
   if (approved.length === 0) {
@@ -108,6 +121,10 @@ export async function generateCrosswordSet(targetKeyword, targetTitle) {
  * Lưu hoặc cập nhật bộ ô chữ
  */
 export async function saveCrosswordSet(crosswordSet) {
+  try {
+    await Crossword.findOneAndUpdate({ id: crosswordSet.id }, crosswordSet, { upsert: true, returnDocument: 'after' });
+  } catch (_) {}
+
   return await updateJson(PATHS.CROSSWORDS, (list = []) => {
     const existingIndex = list.findIndex(c => c.id === crosswordSet.id);
     if (existingIndex >= 0) {
@@ -123,7 +140,12 @@ export async function saveCrosswordSet(crosswordSet) {
  * Xóa bộ ô chữ
  */
 export async function deleteCrosswordSet(crosswordId) {
+  try {
+    await Crossword.deleteOne({ id: crosswordId });
+  } catch (_) {}
+
   return await updateJson(PATHS.CROSSWORDS, (list = []) => {
     return list.filter(c => c.id !== crosswordId);
   }, []);
 }
+

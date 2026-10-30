@@ -1,5 +1,6 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
 import { createPlayer } from '../server/auth/playerAuth.js';
 import {
   createAttempt,
@@ -12,7 +13,12 @@ import {
   sanitizeAttemptForClient
 } from '../server/services/gameService.js';
 
+after(async () => {
+  await disconnectDB();
+});
+
 test('Kiểm tra luồng chơi hoàn chỉnh 4 vòng và đoán từ khóa Chung kết', async () => {
+  await connectDB();
   const { player } = await createPlayer('Thí sinh Toàn Thắng', 'PH88888', 'WD18301', true);
   const { attempt } = await createAttempt(player.playerId, true);
 

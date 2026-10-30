@@ -1,9 +1,19 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
+import Question from '../server/models/Question.js';
 import { readJson, PATHS } from '../server/storage/jsonStore.js';
 import { normalizeVietnamese } from '../server/services/textUtils.js';
 
+after(async () => {
+  await disconnectDB();
+});
+
 test('Kiểm tra 4 kho câu hỏi có đủ 400 câu và đúng phân bố độ khó', async () => {
+  await connectDB();
+  const mongoCount = await Question.countDocuments();
+  assert.strictEqual(mongoCount, 400, 'MongoDB phải chứa đủ 400 câu hỏi');
+
   const r1 = await readJson(PATHS.ROUND1);
   const r2 = await readJson(PATHS.ROUND2);
   const r3 = await readJson(PATHS.ROUND3);

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { readJson, updateJson, PATHS } from '../storage/jsonStore.js';
+import Player from '../models/Player.js';
 
 const SESSIONS = new Map(); // token -> { playerId, expiresAt }
 const RATE_LIMIT_RECOVERY = new Map(); // ip/key -> { count, resetAt }
@@ -45,9 +45,9 @@ export async function createPlayer(displayName, studentId = '', studentClass = '
   const playerId = 'ply_' + crypto.randomUUID();
   const rawRecoveryCode = generateRecoveryCode();
   const recoveryCodeHash = hashRecoveryCode(rawRecoveryCode);
-  const now = new Date().toISOString();
+  const now = new Date();
 
-  const newPlayer = {
+  const newPlayer = await Player.create({
     playerId,
     displayName: name,
     studentId: studentId?.trim() || '',
@@ -58,19 +58,14 @@ export async function createPlayer(displayName, studentId = '', studentClass = '
     recoveryCodeLockedUntil: null,
     createdAt: now,
     lastActiveAt: now
-  };
-
-  await updateJson(PATHS.PLAYERS, (players = []) => {
-    players.push(newPlayer);
-    return players;
-  }, []);
+  });
 
   const sessionToken = generateToken();
   const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 ngày
   SESSIONS.set(sessionToken, { playerId, expiresAt });
 
   return {
-    player: sanitizePlayerProfile(newPlayer, true),
+    player: sanitizePlayerProfile(newPlayer.toObject(), true),
     rawRecoveryCode,
     sessionToken
   };
@@ -87,13 +82,12 @@ export async function getPlayerByToken(token) {
     return null;
   }
 
-  const players = await readJson(PATHS.PLAYERS, []);
-  const player = players.find(p => p.playerId === session.playerId);
+  const player = await Player.findOne({ playerId: session.playerId });
   if (!player) return null;
 
-  // Cập nhật lastActiveAt không đồng bộ nhẹ
-  player.lastActiveAt = new Date().toISOString();
-  return player;
+  player.lastActiveAt = new Date();
+  await player.save();
+  return player.toObject();
 }
 
 /**
@@ -121,13 +115,12 @@ export async function recoverPlayer(recoveryCode, clientIp = 'global') {
   RATE_LIMIT_RECOVERY.set(rateKey, rate);
 
   const targetHash = hashRecoveryCode(recoveryCode);
-  const players = await readJson(PATHS.PLAYERS, []);
-
-  const player = players.find(p => {
-    if (p.recoveryCodeLockedUntil && new Date(p.recoveryCodeLockedUntil).getTime() > now) {
-      return false;
-    }
-    return p.recoveryCodeHash === targetHash;
+  const player = await Player.findOne({
+    recoveryCodeHash: targetHash,
+    $or: [
+      { recoveryCodeLockedUntil: null },
+      { recoveryCodeLockedUntil: { $lte: new Date(now) } }
+    ]
   });
 
   if (!player) {
@@ -142,7 +135,7 @@ export async function recoverPlayer(recoveryCode, clientIp = 'global') {
   SESSIONS.set(sessionToken, { playerId: player.playerId, expiresAt });
 
   return {
-    player: sanitizePlayerProfile(player, true),
+    player: sanitizePlayerProfile(player.toObject(), true),
     sessionToken
   };
 }
@@ -154,21 +147,22 @@ export async function regenerateRecoveryCode(playerId) {
   const rawRecoveryCode = generateRecoveryCode();
   const recoveryCodeHash = hashRecoveryCode(rawRecoveryCode);
 
-  let updatedPlayer = null;
-  await updateJson(PATHS.PLAYERS, (players = []) => {
-    const p = players.find(item => item.playerId === playerId);
-    if (!p) throw new Error('Không tìm thấy người chơi.');
-    p.recoveryCodeHash = recoveryCodeHash;
-    p.recoveryCodeAttempts = 0;
-    p.recoveryCodeLockedUntil = null;
-    p.lastActiveAt = new Date().toISOString();
-    updatedPlayer = p;
-    return players;
-  });
+  const updatedPlayer = await Player.findOneAndUpdate(
+    { playerId },
+    {
+      recoveryCodeHash,
+      recoveryCodeAttempts: 0,
+      recoveryCodeLockedUntil: null,
+      lastActiveAt: new Date()
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!updatedPlayer) throw new Error('Không tìm thấy người chơi.');
 
   return {
     rawRecoveryCode,
-    player: sanitizePlayerProfile(updatedPlayer, true)
+    player: sanitizePlayerProfile(updatedPlayer.toObject(), true)
   };
 }
 
@@ -176,29 +170,24 @@ export async function regenerateRecoveryCode(playerId) {
  * Cập nhật thông tin cá nhân của người chơi
  */
 export async function updatePlayerProfile(playerId, { displayName, studentId, studentClass, publicClass }) {
-  let updatedPlayer = null;
-  await updateJson(PATHS.PLAYERS, (players = []) => {
-    const p = players.find(item => item.playerId === playerId);
-    if (!p) throw new Error('Không tìm thấy người chơi.');
+  const updateData = { lastActiveAt: new Date() };
 
-    if (displayName !== undefined) {
-      const name = displayName?.trim();
-      if (!name || name.length < 2 || name.length > 50) {
-        throw new Error('Tên hiển thị phải từ 2 đến 50 ký tự.');
-      }
-      p.displayName = name;
+  if (displayName !== undefined) {
+    const name = displayName?.trim();
+    if (!name || name.length < 2 || name.length > 50) {
+      throw new Error('Tên hiển thị phải từ 2 đến 50 ký tự.');
     }
+    updateData.displayName = name;
+  }
 
-    if (studentId !== undefined) p.studentId = studentId?.trim() || '';
-    if (studentClass !== undefined) p.studentClass = studentClass?.trim() || '';
-    if (publicClass !== undefined) p.publicClass = Boolean(publicClass);
+  if (studentId !== undefined) updateData.studentId = studentId?.trim() || '';
+  if (studentClass !== undefined) updateData.studentClass = studentClass?.trim() || '';
+  if (publicClass !== undefined) updateData.publicClass = Boolean(publicClass);
 
-    p.lastActiveAt = new Date().toISOString();
-    updatedPlayer = p;
-    return players;
-  });
+  const updatedPlayer = await Player.findOneAndUpdate({ playerId }, updateData, { returnDocument: 'after' });
+  if (!updatedPlayer) throw new Error('Không tìm thấy người chơi.');
 
-  return sanitizePlayerProfile(updatedPlayer, true);
+  return sanitizePlayerProfile(updatedPlayer.toObject(), true);
 }
 
 /**

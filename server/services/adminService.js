@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import AuditLog from '../models/AuditLog.js';
+import Question from '../models/Question.js';
+import Season from '../models/Season.js';
+import Player from '../models/Player.js';
+import Attempt from '../models/Attempt.js';
 import { readJson, updateJson, PATHS } from '../storage/jsonStore.js';
 import { getQuestionsByRound } from './questionService.js';
 import { normalizeVietnamese } from './textUtils.js';
@@ -17,6 +22,10 @@ export async function logAuditAction(adminUsername, action, targetType, targetId
     timestamp: new Date().toISOString()
   };
 
+  try {
+    await AuditLog.create(logEntry);
+  } catch (_) {}
+
   await updateJson(PATHS.AUDIT_LOGS, (logs = []) => {
     logs.unshift(logEntry); // Mới nhất lên đầu
     // Giới hạn 2000 logs gần nhất
@@ -31,6 +40,10 @@ export async function logAuditAction(adminUsername, action, targetType, targetId
  * Lấy danh sách Audit Logs
  */
 export async function getAuditLogs(limit = 100) {
+  try {
+    const logs = await AuditLog.find().sort({ timestamp: -1 }).limit(limit).lean();
+    if (logs && logs.length > 0) return logs;
+  } catch (_) {}
   const logs = await readJson(PATHS.AUDIT_LOGS, []);
   return logs.slice(0, limit);
 }
@@ -98,6 +111,10 @@ export async function saveQuestion(questionData, adminUser = 'admin') {
   const qId = id || (`${round.substring(0, 2).toUpperCase()}-${Date.now().toString().slice(-4)}`);
   questionData.id = qId;
 
+  try {
+    await Question.findOneAndUpdate({ id: qId }, { ...questionData, id: qId }, { upsert: true, returnDocument: 'after' });
+  } catch (_) {}
+
   await updateJson(filePath, (questions = []) => {
     const idx = questions.findIndex(q => q.id === qId);
     if (idx >= 0) {
@@ -124,6 +141,10 @@ export async function deleteQuestion(roundKey, questionId, adminUser = 'admin') 
     case 'chung_ket': filePath = PATHS.ROUND4; break;
   }
 
+  try {
+    await Question.deleteOne({ id: questionId });
+  } catch (_) {}
+
   await updateJson(filePath, (questions = []) => {
     return questions.filter(q => q.id !== questionId);
   });
@@ -136,6 +157,10 @@ export async function deleteQuestion(roundKey, questionId, adminUser = 'admin') 
  * Quản lý Mùa giải
  */
 export async function getAllSeasons() {
+  try {
+    const seasons = await Season.find().lean();
+    if (seasons && seasons.length > 0) return seasons;
+  } catch (_) {}
   return await readJson(PATHS.SEASONS, []);
 }
 
@@ -162,6 +187,13 @@ export async function createSeason(seasonData, adminUser = 'admin') {
     }
   };
 
+  try {
+    if (newSeason.status === 'active') {
+      await Season.updateMany({}, { status: 'archived' });
+    }
+    await Season.create(newSeason);
+  } catch (_) {}
+
   await updateJson(PATHS.SEASONS, (seasons = []) => {
     if (newSeason.status === 'active') {
       seasons.forEach(s => s.status = 'archived');
@@ -175,6 +207,11 @@ export async function createSeason(seasonData, adminUser = 'admin') {
 }
 
 export async function setActiveSeason(seasonId, adminUser = 'admin') {
+  try {
+    await Season.updateMany({}, { status: 'archived' });
+    await Season.updateOne({ id: seasonId }, { status: 'active' });
+  } catch (_) {}
+
   await updateJson(PATHS.SEASONS, (seasons = []) => {
     seasons.forEach(s => {
       s.status = (s.id === seasonId) ? 'active' : 'archived';
@@ -190,6 +227,26 @@ export async function setActiveSeason(seasonId, adminUser = 'admin') {
  * Tìm kiếm người chơi cho Admin
  */
 export async function searchPlayers(query = '') {
+  try {
+    let q = {};
+    if (query) {
+      const reg = new RegExp(query.trim(), 'i');
+      q = { $or: [{ displayName: reg }, { studentId: reg }, { studentClass: reg }, { playerId: reg }] };
+    }
+    const players = await Player.find(q).lean();
+    if (players && players.length > 0) {
+      return players.map(p => ({
+        playerId: p.playerId,
+        displayName: p.displayName,
+        studentId: p.studentId,
+        studentClass: p.studentClass,
+        publicClass: p.publicClass,
+        createdAt: p.createdAt,
+        lastActiveAt: p.lastActiveAt
+      }));
+    }
+  } catch (_) {}
+
   const players = await readJson(PATHS.PLAYERS, []);
   if (!query) return players.slice(0, 50);
 
@@ -206,6 +263,11 @@ export async function searchPlayers(query = '') {
  * Xem lịch sử các lượt chơi của người chơi
  */
 export async function getPlayerAttempts(playerId) {
+  try {
+    const attempts = await Attempt.find({ playerId }).sort({ createdAt: -1 }).lean();
+    if (attempts && attempts.length > 0) return attempts;
+  } catch (_) {}
+
   const attempts = await readJson(PATHS.ATTEMPTS, []);
   return attempts
     .filter(a => a.playerId === playerId)
@@ -219,6 +281,18 @@ export async function disqualifyAttempt(attemptId, reason, adminUser = 'admin') 
   if (!reason || !reason.trim()) {
     throw new Error('Vui lòng nêu rõ lý do loại lượt chơi.');
   }
+
+  try {
+    await Attempt.updateOne(
+      { attemptId },
+      {
+        isDisqualified: true,
+        disqualifiedReason: reason.trim(),
+        disqualifiedBy: adminUser,
+        disqualifiedAt: new Date()
+      }
+    );
+  } catch (_) {}
 
   let updated = null;
   await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
@@ -240,6 +314,18 @@ export async function disqualifyAttempt(attemptId, reason, adminUser = 'admin') 
  * Phục hồi lượt chơi bị loại
  */
 export async function reinstateAttempt(attemptId, adminUser = 'admin') {
+  try {
+    await Attempt.updateOne(
+      { attemptId },
+      {
+        isDisqualified: false,
+        disqualifiedReason: '',
+        reinstatedBy: adminUser,
+        reinstatedAt: new Date()
+      }
+    );
+  } catch (_) {}
+
   let updated = null;
   await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
     const a = attempts.find(item => item.attemptId === attemptId);
@@ -259,6 +345,41 @@ export async function reinstateAttempt(attemptId, adminUser = 'admin') {
  * Thống kê tổng quan hệ thống
  */
 export async function getSystemStats() {
+  try {
+    const totalPlayers = await Player.countDocuments();
+    const totalAttempts = await Attempt.countDocuments();
+    const completedAttempts = await Attempt.countDocuments({ status: 'completed', isDisqualified: false });
+    const abandonedAttempts = await Attempt.countDocuments({ status: 'abandoned' });
+    const seasonsCount = await Season.countDocuments();
+    const attempts = await Attempt.find().lean();
+
+    const roundStats = {
+      khoi_dong: { correct: 0, total: 0 },
+      tranh_tai: { correct: 0, total: 0 },
+      ban_ket: { correct: 0, total: 0 },
+      chung_ket: { correct: 0, total: 0 }
+    };
+
+    for (const a of attempts) {
+      if (!a.rounds) continue;
+      for (const rKey of ['khoi_dong', 'tranh_tai', 'ban_ket', 'chung_ket']) {
+        const r = a.rounds[rKey];
+        if (!r) continue;
+        roundStats[rKey].correct += r.correctCount || 0;
+        roundStats[rKey].total += (r.correctCount + r.wrongCount + r.timeoutCount) || 0;
+      }
+    }
+
+    return {
+      totalPlayers,
+      totalAttempts,
+      completedAttempts,
+      abandonedAttempts,
+      roundStats,
+      seasonsCount
+    };
+  } catch (_) {}
+
   const players = await readJson(PATHS.PLAYERS, []);
   const attempts = await readJson(PATHS.ATTEMPTS, []);
   const seasons = await readJson(PATHS.SEASONS, []);
@@ -344,6 +465,27 @@ export async function updateActiveSeasonTimer({ timePerQuestionSeconds, keywordG
       throw new Error('Thời gian đoán từ khóa phải là số nguyên từ 3 đến 120 giây.');
     }
   }
+
+  try {
+    await Season.updateOne(
+      { status: 'active' },
+      {
+        $set: {
+          'rules.timePerQuestionSeconds': qTime,
+          'rules.keywordGuessTimeSeconds': kwTime
+        }
+      }
+    );
+    await Attempt.updateMany(
+      { status: 'in_progress' },
+      {
+        $set: {
+          'rulesSnapshot.timePerQuestionSeconds': qTime,
+          'rulesSnapshot.keywordGuessTimeSeconds': kwTime
+        }
+      }
+    );
+  } catch (_) {}
 
   let updatedSeason = null;
   await updateJson(PATHS.SEASONS, (seasons = []) => {

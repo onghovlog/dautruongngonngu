@@ -1,5 +1,6 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
 import { createPlayer } from '../server/auth/playerAuth.js';
 import {
   createAttempt,
@@ -11,7 +12,12 @@ import {
   getAttemptById
 } from '../server/services/gameService.js';
 
+after(async () => {
+  await disconnectDB();
+});
+
 test('Kiểm tra cơ chế chấm điểm, deadline 10s và idempotent', async () => {
+  await connectDB();
   // Tạo người chơi test
   const { player } = await createPlayer('Thí sinh Test Điểm Số', 'PH00001', 'WD18301', true);
   const { attempt } = await createAttempt(player.playerId, true);

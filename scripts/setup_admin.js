@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { writeJson, PATHS } from '../server/storage/jsonStore.js';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
+import AdminConfig from '../server/models/AdminConfig.js';
 
 dotenv.config();
 
@@ -18,6 +20,19 @@ async function setupAdmin() {
     role: 'admin',
     updatedAt: new Date().toISOString()
   };
+
+  try {
+    await connectDB();
+    await AdminConfig.findOneAndUpdate(
+      { username },
+      { username, passwordHash },
+      { upsert: true }
+    );
+    console.log(`✓ Đã lưu tài khoản Admin vào MongoDB Atlas.`);
+    await disconnectDB();
+  } catch (err) {
+    console.warn(`⚠️ Không thể cập nhật vào MongoDB lúc này:`, err.message);
+  }
 
   await writeJson(PATHS.ADMIN, adminConfig);
   console.log(`✓ Đã cập nhật thành công tài khoản Admin.`);

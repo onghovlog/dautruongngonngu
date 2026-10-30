@@ -1,10 +1,17 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
+import { connectDB, disconnectDB } from '../server/db/mongo.js';
+import Attempt from '../server/models/Attempt.js';
 import { getLeaderboard } from '../server/services/leaderboardService.js';
 import { getActiveSeason } from '../server/services/gameService.js';
 import { updateJson, PATHS } from '../server/storage/jsonStore.js';
 
+after(async () => {
+  await disconnectDB();
+});
+
 test('Kiểm tra bảng xếp hạng: tiêu chí ưu tiên, mỗi người 1 lượt tốt nhất, đồng hạng 1, 2, 2, 4', async () => {
+  await connectDB();
   const season = await getActiveSeason();
 
   // Tạo mock dữ liệu các lượt chơi hoàn thành trong cùng mùa giải
@@ -66,6 +73,12 @@ test('Kiểm tra bảng xếp hạng: tiêu chí ưu tiên, mỗi người 1 lư
       stats: { totalCorrect: 30, totalQuizTimeSpentMs: 160000 }
     }
   ];
+
+  // Lưu vào MongoDB
+  try {
+    await Attempt.deleteMany({ attemptId: { $regex: /^test_att_/ } });
+    await Attempt.insertMany(mockAttempts);
+  } catch (_) {}
 
   // Lưu tạm vào attempts.json
   await updateJson(PATHS.ATTEMPTS, (attempts = []) => {

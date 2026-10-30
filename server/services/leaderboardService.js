@@ -1,3 +1,5 @@
+import Attempt from '../models/Attempt.js';
+import Player from '../models/Player.js';
 import { readJson, PATHS } from '../storage/jsonStore.js';
 
 /**
@@ -74,9 +76,23 @@ function compareAttempts(a, b) {
  * @param {string} currentPlayerId 
  */
 export async function getLeaderboard(seasonId, timeRange = 'all', currentPlayerId = null) {
-  const attempts = await readJson(PATHS.ATTEMPTS, []);
-  const players = await readJson(PATHS.PLAYERS, []);
+  let attempts = [];
+  let players = [];
+
+  try {
+    const query = { status: 'completed', isDisqualified: false };
+    if (seasonId) query.seasonId = seasonId;
+    attempts = await Attempt.find(query).lean();
+    players = await Player.find().lean();
+  } catch (_) {}
+
+  if (!attempts || attempts.length === 0) {
+    attempts = await readJson(PATHS.ATTEMPTS, []);
+    players = await readJson(PATHS.PLAYERS, []);
+  }
+
   const playerMap = new Map(players.map(p => [p.playerId, p]));
+
 
   // Lọc các lượt hợp lệ: completed, cùng season, không bị loại
   const eligibleAttempts = attempts.filter(a => {

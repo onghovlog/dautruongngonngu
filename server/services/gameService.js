@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import Attempt from '../models/Attempt.js';
+import Season from '../models/Season.js';
 import { readJson, updateJson, PATHS } from '../storage/jsonStore.js';
 import { generateRoundQuestions, generateFinalRoundQuestions } from './questionService.js';
 import { getRandomApprovedCrossword } from './crosswordService.js';
@@ -10,6 +12,11 @@ const ROUND_KEYS = ['khoi_dong', 'tranh_tai', 'ban_ket', 'chung_ket'];
  * Lấy mùa giải đang hoạt động
  */
 export async function getActiveSeason() {
+  try {
+    const active = await Season.findOne({ status: 'active' }).lean();
+    if (active) return active;
+  } catch (_) {}
+
   const seasons = await readJson(PATHS.SEASONS, []);
   const active = seasons.find(s => s.status === 'active') || seasons[0];
   if (!active) {
@@ -22,6 +29,10 @@ export async function getActiveSeason() {
  * Lấy tất cả lượt chơi
  */
 export async function getAllAttempts() {
+  try {
+    const attempts = await Attempt.find().lean();
+    if (attempts && attempts.length > 0) return attempts;
+  } catch (_) {}
   return await readJson(PATHS.ATTEMPTS, []);
 }
 
@@ -29,6 +40,10 @@ export async function getAllAttempts() {
  * Lấy thông tin chi tiết một lượt chơi theo attemptId
  */
 export async function getAttemptById(attemptId) {
+  try {
+    const attempt = await Attempt.findOne({ attemptId }).lean();
+    if (attempt) return attempt;
+  } catch (_) {}
   const attempts = await readJson(PATHS.ATTEMPTS, []);
   return attempts.find(a => a.attemptId === attemptId) || null;
 }
@@ -37,6 +52,10 @@ export async function getAttemptById(attemptId) {
  * Lấy lượt chơi đang diễn ra của người chơi (nếu có)
  */
 export async function getActiveAttemptByPlayer(playerId) {
+  try {
+    const attempt = await Attempt.findOne({ playerId, status: 'in_progress' }).lean();
+    if (attempt) return attempt;
+  } catch (_) {}
   const attempts = await readJson(PATHS.ATTEMPTS, []);
   return attempts.find(a => a.playerId === playerId && a.status === 'in_progress') || null;
 }
@@ -175,6 +194,13 @@ export async function createAttempt(playerId, forceNew = false) {
     }
   };
 
+  // Lưu vào MongoDB
+  try {
+    await Attempt.create(newAttempt);
+  } catch (err) {
+    console.error('[GameService MongoDB Save Error]:', err.message);
+  }
+
   await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
     attempts.push(newAttempt);
     return attempts;
@@ -192,7 +218,7 @@ export async function createAttempt(playerId, forceNew = false) {
 export async function startQuestion(attemptId, playerId, roundKey, questionIndex) {
   let result = null;
 
-  await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
+  await updateJson(PATHS.ATTEMPTS, async (attempts = []) => {
     const attempt = attempts.find(a => a.attemptId === attemptId);
     if (!attempt) throw new Error('Không tìm thấy lượt chơi.');
     if (attempt.playerId !== playerId) throw new Error('Không có quyền truy cập lượt chơi này.');
@@ -215,6 +241,21 @@ export async function startQuestion(attemptId, playerId, roundKey, questionIndex
       q.deadlineAt = now + timeLimitMs;
       attempt.lastUpdatedAt = new Date().toISOString();
       attempt.currentQuestionIndex = questionIndex;
+
+      // Đồng bộ vào MongoDB
+      try {
+        await Attempt.updateOne(
+          { attemptId },
+          {
+            $set: {
+              [`rounds.${roundKey}.questions.${questionIndex}.startedAt`]: q.startedAt,
+              [`rounds.${roundKey}.questions.${questionIndex}.deadlineAt`]: q.deadlineAt,
+              currentQuestionIndex: questionIndex,
+              lastUpdatedAt: new Date(now)
+            }
+          }
+        );
+      } catch (_) {}
     }
 
     result = {
@@ -246,7 +287,7 @@ export async function startQuestion(attemptId, playerId, roundKey, questionIndex
 export async function submitAnswer(attemptId, playerId, roundKey, questionIndex, selectedOptionId) {
   let result = null;
 
-  await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
+  await updateJson(PATHS.ATTEMPTS, async (attempts = []) => {
     const attempt = attempts.find(a => a.attemptId === attemptId);
     if (!attempt) throw new Error('Không tìm thấy lượt chơi.');
     if (attempt.playerId !== playerId) throw new Error('Không có quyền truy cập lượt chơi này.');
@@ -319,6 +360,25 @@ export async function submitAnswer(attemptId, playerId, roundKey, questionIndex,
       round.isCompleted = true;
     }
 
+    // Đồng bộ vào MongoDB
+    try {
+      await Attempt.updateOne(
+        { attemptId },
+        {
+          $set: {
+            [`rounds.${roundKey}.questions.${questionIndex}`]: q,
+            [`rounds.${roundKey}.score`]: round.score,
+            [`rounds.${roundKey}.correctCount`]: round.correctCount,
+            [`rounds.${roundKey}.wrongCount`]: round.wrongCount,
+            [`rounds.${roundKey}.timeoutCount`]: round.timeoutCount,
+            scores: attempt.scores,
+            stats: attempt.stats,
+            lastUpdatedAt: new Date(now)
+          }
+        }
+      );
+    } catch (_) {}
+
     result = formatAnswerResponse(attempt, round, q, roundKey);
     return attempts;
   });
@@ -332,7 +392,7 @@ export async function submitAnswer(attemptId, playerId, roundKey, questionIndex,
 export async function advanceToNextRound(attemptId, playerId) {
   let updatedAttempt = null;
 
-  await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
+  await updateJson(PATHS.ATTEMPTS, async (attempts = []) => {
     const attempt = attempts.find(a => a.attemptId === attemptId);
     if (!attempt) throw new Error('Không tìm thấy lượt chơi.');
     if (attempt.playerId !== playerId) throw new Error('Không có quyền truy cập lượt chơi này.');
@@ -348,6 +408,21 @@ export async function advanceToNextRound(attemptId, playerId) {
       attempt.currentRoundKey = ROUND_KEYS[attempt.currentRoundIndex];
       attempt.currentQuestionIndex = 0;
       attempt.lastUpdatedAt = new Date().toISOString();
+
+      try {
+        await Attempt.updateOne(
+          { attemptId },
+          {
+            $set: {
+              [`rounds.${currentRound.roundKey}.isCompleted`]: true,
+              currentRoundIndex: attempt.currentRoundIndex,
+              currentRoundKey: attempt.currentRoundKey,
+              currentQuestionIndex: 0,
+              lastUpdatedAt: new Date()
+            }
+          }
+        );
+      } catch (_) {}
     }
 
     updatedAttempt = attempt;
@@ -363,7 +438,7 @@ export async function advanceToNextRound(attemptId, playerId) {
 export async function startKeywordGuess(attemptId, playerId) {
   let result = null;
 
-  await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
+  await updateJson(PATHS.ATTEMPTS, async (attempts = []) => {
     const attempt = attempts.find(a => a.attemptId === attemptId);
     if (!attempt) throw new Error('Không tìm thấy lượt chơi.');
     if (attempt.playerId !== playerId) throw new Error('Không có quyền truy cập.');
@@ -383,6 +458,19 @@ export async function startKeywordGuess(attemptId, playerId) {
       kg.startedAt = now;
       kg.deadlineAt = now + guessLimitMs;
       attempt.lastUpdatedAt = new Date().toISOString();
+
+      try {
+        await Attempt.updateOne(
+          { attemptId },
+          {
+            $set: {
+              'rounds.chung_ket.keywordGuess.startedAt': kg.startedAt,
+              'rounds.chung_ket.keywordGuess.deadlineAt': kg.deadlineAt,
+              lastUpdatedAt: new Date(now)
+            }
+          }
+        );
+      } catch (_) {}
     }
 
     result = {
@@ -404,7 +492,7 @@ export async function startKeywordGuess(attemptId, playerId) {
 export async function submitKeywordGuess(attemptId, playerId, guessText) {
   let result = null;
 
-  await updateJson(PATHS.ATTEMPTS, (attempts = []) => {
+  await updateJson(PATHS.ATTEMPTS, async (attempts = []) => {
     const attempt = attempts.find(a => a.attemptId === attemptId);
     if (!attempt) throw new Error('Không tìm thấy lượt chơi.');
     if (attempt.playerId !== playerId) throw new Error('Không có quyền.');
@@ -451,6 +539,23 @@ export async function submitKeywordGuess(attemptId, playerId, guessText) {
     attempt.status = 'completed';
     attempt.completedAt = new Date().toISOString();
     attempt.lastUpdatedAt = attempt.completedAt;
+
+    try {
+      await Attempt.updateOne(
+        { attemptId },
+        {
+          $set: {
+            'rounds.chung_ket.keywordGuess': kg,
+            'rounds.chung_ket.isCompleted': true,
+            status: 'completed',
+            completedAt: new Date(now),
+            lastUpdatedAt: new Date(now),
+            scores: attempt.scores,
+            stats: attempt.stats
+          }
+        }
+      );
+    } catch (_) {}
 
     result = formatCompletedAttemptResponse(attempt);
     return attempts;

@@ -1,3 +1,4 @@
+import Question from '../models/Question.js';
 import { readJson, PATHS } from '../storage/jsonStore.js';
 
 /**
@@ -16,6 +17,11 @@ function shuffleArray(arr) {
  * Lấy danh sách câu hỏi theo vòng
  */
 export async function getQuestionsByRound(roundKey) {
+  try {
+    const questions = await Question.find({ round: roundKey }).lean();
+    if (questions && questions.length > 0) return questions;
+  } catch (_) {}
+
   let filePath = null;
   switch (roundKey) {
     case 'khoi_dong': filePath = PATHS.ROUND1; break;
